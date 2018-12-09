@@ -113,13 +113,15 @@ class Canvas():
     _w = 0
     _h = 0
     _usedSlots = 0
-    _possibleUsableId = None
+    _possibleUsableIds = None
+    _conflictIds = None
     
     def __init__(self, width, height):
         self._canvas = [["." for x in range(0, width)] for y in range(0, height)]
         self._w = width
         self._h = height
-        self._possibleUsableId = []
+        self._possibleUsableIds = []
+        self._conflictIds = []
         
     def __str__(self):
         str = ""
@@ -145,9 +147,9 @@ class Canvas():
         
     @property
     def usableId(self):
-        print("has {0}".format(len(self._possibleUsableId)))
-        assert len(self._possibleUsableId) == 1
-        return self._possibleUsableId[0]
+        # print("has {0}".format(len(self._possibleUsableIds)))
+        assert len(self._possibleUsableIds) == 1
+        return self._possibleUsableIds[0]
         
     def fill(self, rectangle):
         rx = rectangle.topLeft[0]
@@ -159,20 +161,33 @@ class Canvas():
             for x in range(rx, rx + rw):
                 if self._canvas[y][x] == ".":
                     self._canvas[y][x] = rectangle.id
-                    if rectangle.id not in self._possibleUsableId:
-                        self._possibleUsableId.append(rectangle.id)
-                        print("Possible id: {0}".format(rectangle.id))
+                    
+                    if rectangle.id not in self._possibleUsableIds and rectangle.id not in self._conflictIds:
+                        self._possibleUsableIds.append(rectangle.id)
+                        # print("Possible id: {0}".format(rectangle.id))
+                        
                 elif self._canvas[y][x].isdigit():
                     id = self._canvas[y][x]
-                    if id not in self._possibleUsableId:
-                        assert False
+                    # print("Rect {0} has a conflict with id {1}".format(rectangle.id, id))
+                    
+                    if id not in self._conflictIds:
+                        self._conflictIds.append(id)
                         
-                    self._possibleUsableId.remove(id)
-                    print(id)
-                    print(rectangle.id)
+                    if rectangle.id not in self._conflictIds:
+                        self._conflictIds.append(rectangle.id)
+                        
+                    # self._conflictIds.extend([id, rectangle.id])
+                    
+                    if id in self._possibleUsableIds:
+                        self._possibleUsableIds.remove(id)
+                        
+                    if rectangle.id in self._possibleUsableIds:
+                        self._possibleUsableIds.remove(rectangle.id)
                         
                     self._usedSlots += 1
                     self._canvas[y][x] = "X"
+                    
+                # print("Possible ids has: {0}".format(self._possibleUsableIds))
 ####
 def parseInputFile(inputFile):
    rectangles = []
