@@ -1,55 +1,143 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-https://stackoverflow.com/questions/53634190/python-regex-that-matches-char-followed-preceded-by-same-char-but-uppercase-lowe
-
-
-
-
-You may do it with PyPi regex module (note it will work with Java, PCRE (PHP, R, Delphi), Perl, .NET, but won't work with ECMAScript (JavaScript, C++ std::regex), RE2 (Go, Google Apps Script)) using
-
-(\p{L})(?!\1)(?i:\1)
-
-See the regex demo and a proof it works in Python:
-
+import cProfile
+import collections
+import concurrent.futures
+import pstats
 import regex
-rx = r'(\p{L})(?!\1)(?i:\1)'
-print([x.group() for x in regex.finditer(rx, ' aA, Aa, bB, cC but not aB, aa, AA, aC, Ca')])
-# => ['aA', 'Aa', 'bB', 'cC']
+import sys
 
-The solution is based on the inline modifier group (?i:...) inside which all chars are treated in a case insensitive way while other parts are case sensitive (granted there are no other (?i) or re.I).
+def readPolymer(filepath):
+    with open(filepath, 'r') as f:
+        return f.read()
+    
+def reducePolymer(polymer):
+    pattern = regex.compile(r'(\p{L})(?!\1)(?i:\1)')
+    polyCopy = polymer
 
-Details
+    while True:
+        match = pattern.search(polyCopy)
+        if not match:
+            break
+        
+        polyCopy = pattern.sub("", polyCopy)
 
-    (\p{L}) - any letter captured into Group 1
-    (?!\1) - a negative lookahead that fails the match if the next char is absolutely identical to the one captured in Group 1 - note that the regex index is still right after the char captured with (\p{L})
-    (?i:\1) - a case insensitive modifier group that contains a backreference to the value of Group 1 but since it matches it in a case insensitive way it could match both a and A - BUT the preceding lookahead excludes the variant with the alternate case (since the preceding \1 matched in a case sensitive way).
+    return polyCopy
 
-What about a re solution?
+def collapsePolymer(polymer):
+    keys = list(collections.Counter(polymer))
+    return collapse(polymer, keys)
 
-In re, you cannot make part of a pattern optional as (?i) in any part of a pattern makes all of it case insensitive. Besides, re does not support modifier groups.
+def collapse(polymer, keys):
+    visited = []
+    mostReduced = sys.maxsize
+    for k in keys:
+        if k.lower() in visited:
+            continue
+            
+        visited.append(k.lower())
+        copy = polymer.replace(k, '')
+        if k.isupper():
+            copy = copy.replace(k.lower(), '')
+        else:
+            copy = copy.replace(k.upper(), '')
+       
+        reduced = reducePolymer(copy)
+       
+        if len(reduced) < mostReduced:
+            mostReduced = len(reduced)
 
-You may use something like
+    return mostReduced
+             
+# Naive test just to play with futures
+def collapsePolymerByFutures(polymer):
+    futures = []
+    times = list(collections.Counter(polymer))
+    # // to force int division
+    firstHalf = times[:len(times)//2]
+    secondHalf = times[len(times)//2:]
 
-import re
-rx = r'(?i)([^\W\d_])(\1)'
-print([x.group() for x in re.finditer(rx, ' aA, Aa, bB, cC but not aB, aa, AA, aC, Ca') if x.group(1) != x.group(2)])
+    size = sys.maxsize
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures.append(executor.submit(collapse, polymer, firstHalf))
+        futures.append(executor.submit(collapse, polymer, secondHalf))
+        
+        nExcepts = 0
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                if fut.result() < size:
+                    size = fut.result()
+            except Exception as E:
+                nExcepts += 1
+                
+        if nExcepts:
+            print("Total exceptions: {0}".format(nExcepts))
+            
+    return size
+    
+# Naive test #2: just to play with futures
+def collapseSingleKey(polymer, key):
+    copy = polymer.replace(key, '')
+    if key.isupper():
+        copy = copy.replace(key.lower(), '')
+    else:
+        copy = copy.replace(key.upper(), '')
+   
+    return len(reducePolymer(copy))
 
-See the Python demo.
+def collapsePolymerByFuturesUnrolled(polymer):
+    futures = []
+    keys = list(collections.Counter(polymer))
+    visited = []
+    
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        for k in keys:
+            if k.lower() in visited:
+                continue
+                
+            futures.append(executor.submit(collapseSingleKey, polymer, k))
+            visited.append(k.lower())
 
-    (?i) - set the whole regex case insensitive
-    ([^\W\d_]) - a letter is captured into Group 1
-    (\1) - the same letter is captured into Group 2 (case insensitive, so Aa, aA, aa and AA will match).
+        size = sys.maxsize
+        nExcepts = 0
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                if fut.result() < size:
+                    size = fut.result()
+            except Exception as E:
+                nExcepts += 1
+                
+        if nExcepts:
+            print("Total exceptions: {0}".format(nExcepts))
+            
+    return size
 
-The if x.group(1) != x.group(2) condition filters out the unwanted matches.
+def profile(func, polymer):
+    profiler = cProfile.Profile()
+    profiler.enable()
+    shortestPolymer = func(polymer)
+    profiler.disable()
+    print("** Profiling: {0}\n".format(func.__name__))
+    print("Shortest collapsed polymer: {0}".format(shortestPolymer))
+    ps = pstats.Stats(profiler, stream=sys.stdout)
+    ps.print_stats()
+    
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("You have to pass the input filepath.")
+        exit(-1)
+      
+    polymer = readPolymer(sys.argv[1])
+    reduced = reducePolymer(polymer)
+    print ("Sizes input - reduced: {0} - {1}".format(len(polymer), len(reduced)))
+    
+    print("\n###################################################\n")
+    profile(collapsePolymer, polymer)
+    
+    print("\n###################################################\n")
+    profile(collapsePolymerByFutures, polymer)
+    
+    print("\n###################################################\n")
+    profile(collapsePolymerByFuturesUnrolled, polymer)
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-mport re
-import string
-
-pattern = re.compile('|'.join([''.join(i) for i in zip(list(string.ascii_lowercase), list(string.ascii_uppercase))])
-pattern.search(your_text)
-
-pattern = '|'.join([''.join(i) for i in zip(list(string.ascii_uppercase), list(string.ascii_lowercase))] + [''.join(i) for i in zip(list(string.ascii_lowercase), list(string.ascii_uppercase))])
